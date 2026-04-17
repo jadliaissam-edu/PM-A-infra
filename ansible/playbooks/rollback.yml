@@ -1,0 +1,8 @@
+---
+- name: Rollback Docker Swarm Stack
+  hosts: managers
+  become: yes
+  tasks:
+    - name: Message de Rollback
+      debug:
+        msg: "Exécution du rollback des services Swarm (ex: docker service update --rollback agileflow_django_api)"

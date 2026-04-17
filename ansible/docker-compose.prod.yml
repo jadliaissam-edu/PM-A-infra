@@ -5,11 +5,19 @@ networks:
     driver: overlay
   backend_net:
     driver: overlay
-    internal: true 
+    internal: true
 
 volumes:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:
+
+secrets:
+  db_password:
+    external: true
+  django_secret_key:
+    external: true
 
 services:
   nginx:
@@ -22,11 +30,16 @@ services:
     deploy:
       placement:
         constraints:
-          - node.role == manager 
-
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
 
   frontend:
-    image: #frontend:latest to be replaced in the future
+    image: nginx:alpine # MOCK IMAGE for testing
     networks:
       - public_net
     deploy:
@@ -34,20 +47,43 @@ services:
       placement:
         constraints:
           - node.labels.tier == app
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
 
   django_api:
-    image: #backend:latest to be replaced in the future
+    image: nginx:alpine # MOCK IMAGE for testing
     networks:
       - public_net
       - backend_net
+    secrets:
+      - db_password
+      - django_secret_key
+    environment:
+      - DB_PASSWORD=/run/secrets/db_password
+      - SECRET_KEY=/run/secrets/django_secret_key
     deploy:
       replicas: 2
       placement:
         constraints:
           - node.labels.tier == app
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: ["CMD", "echo", "mock_healthy"] # MOCK HEALTHCHECK
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   fastapi_ai:
-    image: #ai:latest to be replaced in the future
+    image: nginx:alpine # MOCK IMAGE for testing
     networks:
       - public_net
       - backend_net
@@ -56,28 +92,64 @@ services:
       placement:
         constraints:
           - node.labels.tier == app
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: ["CMD", "echo", "mock_healthy"] # MOCK HEALTHCHECK
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   celery_worker:
-    image: #celery:latest to be replaced in the future
+    image: alpine # MOCK IMAGE for testing
+    command: sleep infinity
     networks:
       - backend_net
+    secrets:
+      - db_password
+    environment:
+      - DB_PASSWORD=/run/secrets/db_password
     deploy:
       replicas: 2
       placement:
         constraints:
           - node.labels.tier == app
-
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
 
   postgres:
-    [cite_start]image: pgvector/pgvector:pg16 
+    image: pgvector/pgvector:pg16 
     networks:
       - backend_net
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    secrets:
+      - db_password
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
     deploy:
       placement:
         constraints:
           - node.labels.tier == data
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   redis:
     image: redis:alpine
@@ -89,3 +161,45 @@ services:
       placement:
         constraints:
           - node.labels.tier == data
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    networks:
+      - backend_net
+    volumes:
+      - prometheus_data:/prometheus
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+
+  grafana:
+    image: grafana/grafana:latest
+    networks:
+      - public_net
+      - backend_net
+    volumes:
+      - grafana_data:/var/lib/grafana
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G

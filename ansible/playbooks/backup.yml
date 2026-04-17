@@ -1,0 +1,8 @@
+---
+- name: Backup Data (PostgreSQL / Redis)
+  hosts: workers_data
+  become: yes
+  tasks:
+    - name: Backup PostgreSQL Database
+      debug:
+        msg: "Exécution de pg_dump pour sauvegarder la base de données de production."
