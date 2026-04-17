@@ -1,0 +1,28 @@
+---
+- name: Déployer la Stack AgileFlow sur le Swarm
+  hosts: managers
+  become: yes
+  vars:
+    stack_name: agileflow
+    compose_src: ../docker-compose.prod.yml
+    compose_dest: /opt/agileflow/docker-compose.yml
+
+  tasks:
+    - name: Créer le répertoire de destination
+      file:
+        path: /opt/agileflow
+        state: directory
+        mode: '0755'
+
+    - name: Copier le fichier docker-compose sur le manager
+      copy:
+        src: "{\{\ compose_src \}\}"
+        dest: "{\{\ compose_dest \}\}"
+        mode: '0644'
+
+    - name: Déployer la stack Docker Swarm
+      shell: >
+        docker stack deploy 
+        --with-registry-auth 
+        -c {\{\ compose_dest \}\} 
+        {\{\ stack_name \}\}

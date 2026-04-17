@@ -1,0 +1,91 @@
+version: '3.8'
+
+networks:
+  public_net:
+    driver: overlay
+  backend_net:
+    driver: overlay
+    internal: true 
+
+volumes:
+  postgres_data:
+  redis_data:
+
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - public_net
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager 
+
+
+  frontend:
+    image: #frontend:latest to be replaced in the future
+    networks:
+      - public_net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.tier == app
+
+  django_api:
+    image: #backend:latest to be replaced in the future
+    networks:
+      - public_net
+      - backend_net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.tier == app
+
+  fastapi_ai:
+    image: #ai:latest to be replaced in the future
+    networks:
+      - public_net
+      - backend_net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.tier == app
+
+  celery_worker:
+    image: #celery:latest to be replaced in the future
+    networks:
+      - backend_net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.labels.tier == app
+
+
+  postgres:
+    [cite_start]image: pgvector/pgvector:pg16 
+    networks:
+      - backend_net
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      placement:
+        constraints:
+          - node.labels.tier == data
+
+  redis:
+    image: redis:alpine
+    networks:
+      - backend_net
+    volumes:
+      - redis_data:/data
+    deploy:
+      placement:
+        constraints:
+          - node.labels.tier == data

@@ -1,0 +1,48 @@
+---
+- name: Initialiser Docker Swarm sur le Manager
+  hosts: managers
+  become: yes
+  tasks:
+    - name: Vérifier si Swarm est déjà actif
+      shell: docker info --format '{\{ .Swarm.LocalNodeState }\}'
+      register: swarm_state
+      changed_when: false
+
+    - name: Initialiser le cluster Swarm
+      shell: docker swarm init --advertise-addr {\{\ ansible_default_ipv4.address \}\}
+      when: swarm_state.stdout != 'active'
+
+    - name: Récupérer le token pour les workers
+      shell: docker swarm join-token -q worker
+      register: worker_token
+      changed_when: false
+
+- name: Rejoindre le Swarm (Workers)
+  hosts: workers_app:workers_data
+  become: yes
+  tasks:
+    - name: Vérifier l'état Swarm du worker
+      shell: docker info --format '{\{ .Swarm.LocalNodeState }\}'
+      register: worker_swarm_state
+      changed_when: false
+
+    - name: Rejoindre le cluster Swarm
+      shell: >
+        docker swarm join 
+        --token {\{\ hostvars[groups['managers'][0]]['worker_token']['stdout'] \}\} 
+        {\{\ hostvars[groups['managers'][0]]['ansible_default_ipv4']['address'] \}\}:2377
+      when: worker_swarm_state.stdout != 'active'
+
+- name: Appliquer les labels de placement sur les nœuds
+  hosts: managers
+  become: yes
+  tasks:
+    - name: Label tier=app pour workers_app
+      shell: docker node update --label-add tier=app {\{\ item \}\}
+      loop: "{\{\ groups['workers_app'] \}\}"
+      ignore_errors: yes 
+
+    - name: Label tier=data pour workers_data
+      shell: docker node update --label-add tier=data {\{\ item \}\}
+      loop: "{\{\ groups['workers_data'] \}\}"
+      ignore_errors: yes
