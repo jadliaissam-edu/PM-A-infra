@@ -1,82 +1,171 @@
 ---
-- name: Apply common OS hardening
+- name: Prepare hosts (Docker install + baseline)
   hosts: all
   become: yes
+  vars:
+    project_dir: "/opt/agileflow"
   roles:
     - common
-
-- name: Initialiser Docker Swarm sur le Manager
-  hosts: managers
-  become: yes
   tasks:
-    - name: Vérifier si Swarm est déjà actif
-      shell: docker info --format '{% raw %}{{ .Swarm.LocalNodeState }}{% endraw %}'
-      register: swarm_state
-      changed_when: false
-
-    - name: Initialiser le cluster Swarm
-      shell: docker swarm init --advertise-addr {{ ansible_default_ipv4.address }}
-      when: swarm_state.stdout != 'active'
-
-    - name: Récupérer le token pour les workers
-      shell: docker swarm join-token -q worker
-      register: worker_token
-      changed_when: false
-
-- name: Rejoindre le Swarm (Workers)
-  hosts: workers_app:workers_data
-  become: yes
-  tasks:
-    - name: Vérifier l'état Swarm du worker
-      shell: docker info --format '{% raw %}{{ .Swarm.LocalNodeState }}{% endraw %}'
-      register: worker_swarm_state
-      changed_when: false
-
-    - name: Rejoindre le cluster Swarm
-      shell: >
-        docker swarm join 
-        --token {{ hostvars[groups['managers'][0]]['worker_token']['stdout'] }} 
-        {{ hostvars[groups['managers'][0]]['ansible_default_ipv4']['address'] }}:2377
-      when: worker_swarm_state.stdout != 'active'
-
-- name: Appliquer les labels de placement sur les nœuds
-  hosts: managers
-  become: yes
-  tasks:
-    - name: Label tier=app pour workers_app
-      shell: docker node update --label-add tier=app {{ item }}
-      loop: "{{ groups['workers_app'] | default([]) }}"
-      ignore_errors: yes 
-
-    - name: Label tier=data pour workers_data
-      shell: docker node update --label-add tier=data {{ item }}
-      loop: "{{ groups['workers_data'] | default([]) }}"
-      ignore_errors: yes
-
-- name: Deploy AgileFlow Stack
-  hosts: managers
-  become: yes
-  vars:
-    stack_name: agileflow
-    compose_src: ../docker-compose.prod.yml
-    compose_dest: /opt/agileflow/docker-compose.yml
-
-  tasks:
-    - name: Create destination directory
+    - name: Ensure target directory exists
       file:
-        path: /opt/agileflow
+        path: "{{ project_dir }}"
         state: directory
         mode: '0755'
 
-    - name: Copy docker-compose to manager
-      copy:
-        src: "{{ compose_src }}"
-        dest: "{{ compose_dest }}"
-        mode: '0644'
+    - name: Install Docker prerequisites
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        state: present
+        update_cache: yes
 
-    - name: Deploy Swarm stack
-      shell: >
-        docker stack deploy 
-        --with-registry-auth 
-        -c {{ compose_dest }} 
-        {{ stack_name }}
+    - name: Add Docker GPG key
+      shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/docker-archive-keyring.gpg
+
+    - name: Add Docker repository
+      shell: echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+- name: Initialize Swarm on manager
+  hosts: managers
+  become: yes
+  vars:
+    project_dir: "/opt/agileflow"
+    stack_name: "agileflow"
+    stack_file: "{{ project_dir }}/PM-A-infra/ansible/docker-compose.prod.yml"
+    certs_dir: "{{ project_dir }}/PM-A-infra/ansible/certs"
+
+  tasks:
+
+    - name: Wait for Docker daemon
+      shell: docker info
+      register: docker_ready
+      retries: 10
+      delay: 3
+      until: docker_ready.rc == 0
+      changed_when: false
+
+    - name: Check swarm state
+      shell: docker info --format '{{"{{"}}.Swarm.LocalNodeState{{"}}"}}'
+      register: swarm_state
+      changed_when: false
+
+    - name: Debug swarm state
+      debug:
+        var: swarm_state.stdout
+
+    - name: Initialize Docker Swarm
+      shell: docker swarm init --advertise-addr {{ ansible_host }}
+      when: swarm_state.stdout != "active"
+
+    - name: Verify swarm manager
+      shell: docker info --format '{{"{{"}}.Swarm.ControlAvailable{{"}}"}}'
+      register: swarm_manager
+      changed_when: false
+
+    - name: Fail if not manager
+      fail:
+        msg: "Node is not a swarm manager"
+      when: swarm_manager.stdout != "true"
+
+    - name: Get worker join token
+      shell: docker swarm join-token -q worker
+      register: worker_join_token
+
+    - name: Set join token fact
+      set_fact:
+        swarm_worker_token: "{{ worker_join_token.stdout }}"
+
+    - name: Ensure stack directories exist
+      file:
+        path: "{{ project_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy AgileFlow project files to manager
+      synchronize:
+        src: "../../../../"
+        dest: "{{ project_dir }}/"
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=node_modules"
+          - "--exclude=__pycache__"
+          - "--exclude=venv"
+          - "--exclude=.terraform"
+
+    - name: Generate self-signed TLS certs if missing
+      shell: |
+        mkdir -p {{ certs_dir }}
+        test -f {{ certs_dir }}/fullchain.pem -a -f {{ certs_dir }}/privkey.pem || \
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+          -keyout {{ certs_dir }}/privkey.pem \
+          -out {{ certs_dir }}/fullchain.pem \
+          -subj "/CN={{ inventory_hostname }}"
+
+    - name: Create Swarm secrets if missing
+      shell: |
+        docker secret inspect db_password >/dev/null 2>&1 || echo "secret" | docker secret create db_password -
+        docker secret inspect django_secret_key >/dev/null 2>&1 || echo "changeme" | docker secret create django_secret_key -
+        docker secret inspect celery_broker_url >/dev/null 2>&1 || echo "redis://redis:6379/0" | docker secret create celery_broker_url -
+
+    - name: Build frontend image
+      shell: docker build -t agileflow-frontend:latest {{ project_dir }}/PM-A-frontend
+
+    - name: Build backend image
+      shell: docker build -t agileflow-backend:latest {{ project_dir }}/PM-A-backend
+
+    - name: Build AI image
+      shell: docker build -t agileflow-ai:latest {{ project_dir }}/PM-A-ia
+
+    - name: Deploy stack
+      shell: docker stack deploy -c {{ stack_file }} {{ stack_name }}
+
+- name: Join workers to swarm
+  hosts: workers_data
+  become: yes
+  vars:
+    manager_ip: "{{ hostvars[groups['managers'][0]].ansible_host }}"
+    token: "{{ hostvars[groups['managers'][0]].swarm_worker_token }}"
+  tasks:
+    - name: Join swarm as worker
+      shell: |
+        docker info --format '{{"{{"}}.Swarm.LocalNodeState{{"}}"}}' | grep -q active || \
+          docker swarm join --token {{ token }} {{ manager_ip }}:2377
+
+- name: Label nodes
+  hosts: managers
+  become: yes
+  tasks:
+    - name: Label app node (manager)
+      shell: docker node update --label-add tier=app $(docker node ls --format '{{"{{"}}.Hostname{{"}}"}}' | head -n 1)
+      ignore_errors: yes
+
+    - name: Label data nodes
+      shell: |
+        for n in $(docker node ls --format '{{"{{"}}.Hostname{{"}}"}}' | tail -n +2); do
+          docker node update --label-add tier=data "$n" || true
+        done
+      ignore_errors: yes

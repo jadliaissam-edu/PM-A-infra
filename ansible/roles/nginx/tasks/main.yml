@@ -1,2 +1,23 @@
 ---
-# Tasks for nginx
+- name: Install Nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: yes
+
+- name: Configure Nginx Headers for Security
+  copy:
+    dest: /etc/nginx/conf.d/security.conf
+    content: |
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+      add_header X-Frame-Options "DENY";
+      add_header X-Content-Type-Options "nosniff";
+      add_header Referrer-Policy "strict-origin-when-cross-origin";
+      add_header Permissions-Policy "camera=(), microphone=(), geolocation=()";
+  notify: restart nginx
+
+- name: Ensure Nginx is running
+  service:
+    name: nginx
+    state: started
+    enabled: yes

@@ -14,7 +14,7 @@ ansible/
 │   ├── staging/
 │   └── production/          # Contains inventory.yml with IP addresses and server groups
 ├── playbooks/
-│   ├── deploy.yml           # Main playbook: OS Hardening + Swarm Init + Stack Deployment
+│   ├── deploy.yml           # Main playbook: Role-based deployment (common, db, cache, app, web)
 │   ├── rollback.yml         # Playbook to rollback a faulty deployment
 │   └── backup.yml           # Playbook for database backups (PostgreSQL)
 └── roles/

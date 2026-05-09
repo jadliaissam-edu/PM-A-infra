@@ -1,8 +1,94 @@
 ---
 - name: Backup Data (PostgreSQL / Redis)
-  hosts: workers_data
+  hosts: all
   become: yes
+  vars:
+    backup_dir: /opt/agileflow/backups
+    timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+
   tasks:
-    - name: Backup PostgreSQL Database
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0750'
+
+    # ── PostgreSQL Backup ──────────────────────────────────
+    - name: Run pg_dump inside the postgres container
+      community.docker.docker_container_exec:
+        container: "{{ postgres_container_name | default('agileflow_postgres.1') }}"
+        command: >
+          pg_dump -U postgres -Fc --file /tmp/backup_{{ timestamp }}.dump
+      ignore_errors: yes
+      register: pg_dump_result
+
+    - name: Copy pg_dump backup from container to host
+      command: >
+        docker cp
+        {{ postgres_container_name | default('agileflow_postgres.1') }}:/tmp/backup_{{ timestamp }}.dump
+        {{ backup_dir }}/postgres_{{ timestamp }}.dump
+      ignore_errors: yes
+
+    - name: Remove temporary dump file from container
+      community.docker.docker_container_exec:
+        container: "{{ postgres_container_name | default('agileflow_postgres.1') }}"
+        command: rm -f /tmp/backup_{{ timestamp }}.dump
+      ignore_errors: yes
+
+    # ── Redis Backup ───────────────────────────────────────
+    - name: Trigger Redis BGSAVE
+      community.docker.docker_container_exec:
+        container: "{{ redis_container_name | default('agileflow_redis.1') }}"
+        command: redis-cli BGSAVE
+      ignore_errors: yes
+
+    - name: Wait for Redis BGSAVE to complete
+      community.docker.docker_container_exec:
+        container: "{{ redis_container_name | default('agileflow_redis.1') }}"
+        command: >
+          bash -c "until redis-cli LASTSAVE | grep -q '{{ ansible_date_time.date }}'; do sleep 2; done"
+      ignore_errors: yes
+      timeout: 60
+
+    - name: Copy Redis dump from container to host
+      command: >
+        docker cp
+        {{ redis_container_name | default('agileflow_redis.1') }}:/data/dump.rdb
+        {{ backup_dir }}/redis_{{ timestamp }}.rdb
+      ignore_errors: yes
+
+    # ── Cleanup old backups (keep last 7 days) ─────────────
+    - name: Remove PostgreSQL backups older than 7 days
+      find:
+        paths: "{{ backup_dir }}"
+        patterns: "postgres_*.dump"
+        age: 7d
+      register: old_pg_backups
+
+    - name: Delete old PostgreSQL backups
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_pg_backups.files }}"
+
+    - name: Remove Redis backups older than 7 days
+      find:
+        paths: "{{ backup_dir }}"
+        patterns: "redis_*.rdb"
+        age: 7d
+      register: old_redis_backups
+
+    - name: Delete old Redis backups
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_redis_backups.files }}"
+
+    # ── Summary ────────────────────────────────────────────
+    - name: List current backups
+      command: ls -lh "{{ backup_dir }}"
+      register: backup_list
+
+    - name: Display backup summary
       debug:
-        msg: "Exécution de pg_dump pour sauvegarder la base de données de production."
+        msg: "{{ backup_list.stdout_lines }}"

@@ -1,8 +1,62 @@
 ---
-- name: Rollback Docker Swarm Stack
-  hosts: managers
+- name: Rollback Docker Swarm Services
+  hosts: all
   become: yes
+  vars:
+    stack_name: agileflow
+    services_to_rollback:
+      - django_api
+      - frontend
+      - fastapi_ai
+      - celery_worker
+      - nginx
+
   tasks:
-    - name: Message de Rollback
+    - name: List running services in the stack
+      command: docker service ls --filter label=com.docker.stack.namespace={{ stack_name }}
+      register: service_list
+
+    - name: Display current service state
       debug:
-        msg: "Exécution du rollback des services Swarm (ex: docker service update --rollback agileflow_django_api)"
+        msg: "{{ service_list.stdout_lines }}"
+
+    # ── Rollback each service ──────────────────────────────
+    - name: Rollback services to previous version
+      command: >
+        docker service rollback {{ stack_name }}_{{ item }}
+      loop: "{{ services_to_rollback }}"
+      ignore_errors: yes
+      register: rollback_results
+
+    - name: Show rollback results
+      debug:
+        msg: "{{ item.stdout | default(item.stderr) }}"
+      loop: "{{ rollback_results.results }}"
+
+    # ── Verify services are running after rollback ─────────
+    - name: Wait 10 seconds for services to stabilize
+      pause:
+        seconds: 10
+
+    - name: Check service state after rollback
+      command: docker service ls --filter label=com.docker.stack.namespace={{ stack_name }}
+      register: post_rollback_state
+
+    - name: Display post-rollback service state
+      debug:
+        msg: "{{ post_rollback_state.stdout_lines }}"
+
+    # ── Alert if any service has 0 replicas ───────────────
+    - name: Verify all services have running replicas
+      shell: >
+        docker service ls --filter label=com.docker.stack.namespace={{ stack_name }}
+        --format '{{ '{{' }}.Name{{ '}}' }} {{ '{{' }}.Replicas{{ '}}' }}'
+        | grep -v '1/1\|2/2\|3/3'
+      register: failed_services
+      ignore_errors: yes
+      failed_when: false
+
+    - name: Warn about services with incomplete replicas
+      debug:
+        msg: "WARNING - Services with incomplete replicas: {{ failed_services.stdout_lines }}"
+      when: failed_services.stdout_lines | length > 0

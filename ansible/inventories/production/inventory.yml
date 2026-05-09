@@ -1,22 +1,18 @@
 all:
+  vars:
+    ansible_user: deploy
+    ansible_port: 2222
   children:
     managers:
       hosts:
         manager-1:
-          ansible_host: <IP_MANAGER_1>
-          ansible_user: deploy 
-    
+          ansible_host: 62.238.34.57
     workers_app:
       hosts:
-        worker-app-1:
-          ansible_host: <IP_WORKER_APP_1>
-          ansible_user: deploy
-        worker-app-2:
-          ansible_host: <IP_WORKER_APP_2>
-          ansible_user: deploy
-          
+        manager-1:
     workers_data:
       hosts:
-        worker-data-1:
-          ansible_host: <IP_WORKER_DATA_1>
-          ansible_user: deploy
+        worker-db-1:
+          ansible_host: 62.238.46.245
+        worker-redis-1:
+          ansible_host: 62.238.36.18
