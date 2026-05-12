@@ -1,2 +1,64 @@
 ---
-# Tasks for django
+# ── Django Backend Deployment (Docker-based) ─────────────
+- name: Ensure project directory exists
+  file:
+    path: "{{ project_dir | default('/opt/agileflow') }}"
+    state: directory
+    mode: '0755'
+  tags: django
+
+- name: Copy backend source to server
+  synchronize:
+    src: "{{ playbook_dir }}/../../../../PM-A-backend/"
+    dest: "{{ project_dir | default('/opt/agileflow') }}/PM-A-backend/"
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=__pycache__"
+      - "--exclude=venv"
+      - "--exclude=*.pyc"
+      - "--exclude=db.sqlite3"
+  tags: django
+
+- name: Copy environment file
+  template:
+    src: env.j2
+    dest: "{{ project_dir | default('/opt/agileflow') }}/PM-A-backend/.env"
+    mode: '0600'
+    owner: deploy
+  tags: [django, secrets]
+
+- name: Build Django Docker image
+  docker_image:
+    name: agileflow-backend
+    tag: "{{ deploy_version | default('latest') }}"
+    build:
+      path: "{{ project_dir | default('/opt/agileflow') }}/PM-A-backend"
+      dockerfile: Dockerfile
+    source: build
+  tags: django
+
+- name: Run Django database migrations
+  docker_container:
+    name: django-migrate
+    image: "agileflow-backend:{{ deploy_version | default('latest') }}"
+    command: python manage.py migrate --noinput
+    env_file: "{{ project_dir | default('/opt/agileflow') }}/PM-A-backend/.env"
+    networks:
+      - name: backend_net
+    state: started
+    detach: no
+  ignore_errors: yes
+  tags: [django, migrate]
+
+- name: Collect static files
+  docker_container:
+    name: django-collectstatic
+    image: "agileflow-backend:{{ deploy_version | default('latest') }}"
+    command: python manage.py collectstatic --noinput
+    env_file: "{{ project_dir | default('/opt/agileflow') }}/PM-A-backend/.env"
+    volumes:
+      - "{{ project_dir | default('/opt/agileflow') }}/static:/app/staticfiles"
+    state: started
+    detach: no
+  ignore_errors: yes
+  tags: [django, collectstatic]

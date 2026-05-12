@@ -7,6 +7,13 @@ variable "network_id" {
 variable "ssh_public_key" {
   type = string
 }
+variable "ssh_key_id" {
+  type = string
+}
+variable "firewall_ids" {
+  type    = list(string)
+  default = []
+}
 variable "location" {
   type    = string
   default = "hel1"

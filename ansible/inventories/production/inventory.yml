@@ -2,17 +2,19 @@ all:
   vars:
     ansible_user: deploy
     ansible_port: 2222
+    ansible_private_key_file: ~/.ssh/id_ed25519
   children:
     managers:
       hosts:
         manager-1:
-          ansible_host: 62.238.34.57
+          ansible_host: 89.167.58.229
     workers_app:
       hosts:
-        manager-1:
+        worker-app-1:
+          ansible_host: 89.167.58.229
     workers_data:
       hosts:
         worker-db-1:
-          ansible_host: 62.238.46.245
+          ansible_host: 89.167.7.69
         worker-redis-1:
-          ansible_host: 62.238.36.18
+          ansible_host: 62.238.27.24
