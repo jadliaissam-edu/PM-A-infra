@@ -1,0 +1,45 @@
+name: Deploy on Push to Main
+
+on:
+  workflow_run:
+    workflows:
+      - Frontend CI/CD (React/Vite)
+      - Backend CI/CD (Django)
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ansible/**'
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push'
+    environment:
+      name: production
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Add Server to Known Hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H 89.167.58.229 >> ~/.ssh/known_hosts
+
+      - name: Deploy via Ansible
+        run: |
+          ssh deploy@89.167.58.229 "cd ~/ansible && ansible-playbook playbooks/deploy.yml -i inventories/production/inventory.yml"
