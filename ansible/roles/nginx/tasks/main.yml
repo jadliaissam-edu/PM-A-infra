@@ -1,23 +1,84 @@
 ---
+# ── Install Nginx ────────────────────────────────────────
 - name: Install Nginx
   apt:
     name: nginx
     state: present
     update_cache: yes
+  tags: nginx
 
-- name: Configure Nginx Headers for Security
+# ── Install Certbot for Let's Encrypt ────────────────────
+- name: Install certbot
+  apt:
+    name:
+      - certbot
+      - python3-certbot-nginx
+    state: present
+  tags: [nginx, ssl]
+
+- name: Obtain TLS certificate with certbot
+  command: >
+    certbot certonly --nginx
+    --non-interactive --agree-tos
+    --email {{ certbot_email | default('admin@' + inventory_hostname) }}
+    -d {{ inventory_hostname }}
+  args:
+    creates: /etc/letsencrypt/live/{{ inventory_hostname }}/fullchain.pem
+  tags: [nginx, ssl]
+
+# ── Security Headers (per spec) ─────────────────────────
+- name: Configure Nginx Security Headers
   copy:
     dest: /etc/nginx/conf.d/security.conf
     content: |
-      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
-      add_header X-Frame-Options "DENY";
-      add_header X-Content-Type-Options "nosniff";
-      add_header Referrer-Policy "strict-origin-when-cross-origin";
-      add_header Permissions-Policy "camera=(), microphone=(), geolocation=()";
+      # Security headers per cahier de charge
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'nonce-{% request_nonce %}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none';" always;
+      add_header X-Frame-Options "DENY" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
   notify: restart nginx
+  tags: [nginx, security]
+
+# ── TLS Configuration (TLS 1.3 only per spec) ───────────
+- name: Configure TLS settings
+  copy:
+    dest: /etc/nginx/conf.d/tls.conf
+    content: |
+      ssl_protocols TLSv1.3;
+      ssl_ciphers TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256;
+      ssl_prefer_server_ciphers off;
+      ssl_session_cache shared:SSL:10m;
+      ssl_session_timeout 1d;
+      ssl_session_tickets off;
+  notify: restart nginx
+  tags: [nginx, ssl]
+
+# ── Rate limiting configuration ─────────────────────────
+- name: Configure rate limiting
+  copy:
+    dest: /etc/nginx/conf.d/rate-limit.conf
+    content: |
+      limit_req_zone $binary_remote_addr zone=general:10m rate=10r/s;
+      limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/m;
+      limit_req_status 429;
+  notify: restart nginx
+  tags: [nginx, security]
+
+# ── Certbot auto-renewal cron ────────────────────────────
+- name: Ensure certbot renewal cron exists
+  cron:
+    name: "certbot renew"
+    job: "certbot renew --quiet --deploy-hook 'systemctl reload nginx'"
+    minute: "0"
+    hour: "3"
+    user: root
+  tags: [nginx, ssl]
 
 - name: Ensure Nginx is running
   service:
     name: nginx
     state: started
     enabled: yes
+  tags: nginx

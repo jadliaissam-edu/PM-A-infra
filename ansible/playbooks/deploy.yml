@@ -16,12 +16,14 @@
     - name: Install Docker prerequisites
       apt:
         name:
-          - apt-transport-https
           - ca-certificates
           - curl
           - software-properties-common
         state: present
         update_cache: yes
+      retries: 5
+      delay: 30
+      ignore_errors: yes
 
     - name: Add Docker GPG key
       shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
@@ -42,12 +44,21 @@
           - docker-compose-plugin
         state: present
         update_cache: yes
+      retries: 5
+      delay: 30
+      ignore_errors: yes
 
     - name: Start Docker service
       service:
         name: docker
         state: started
         enabled: yes
+
+    - name: Add deploy user to docker group
+      user:
+        name: deploy
+        groups: docker
+        append: yes
 
 - name: Initialize Swarm on manager
   hosts: managers
@@ -107,7 +118,7 @@
 
     - name: Copy AgileFlow project files to manager
       synchronize:
-        src: "../../../../"
+        src: "/mnt/c/Users/ABDELHAK/Desktop/AgileFlow/"
         dest: "{{ project_dir }}/"
         rsync_opts:
           - "--exclude=.git"
@@ -154,6 +165,7 @@
       shell: |
         docker info --format '{{"{{"}}.Swarm.LocalNodeState{{"}}"}}' | grep -q active || \
           docker swarm join --token {{ token }} {{ manager_ip }}:2377
+      tags: join_workers
 
 - name: Label nodes
   hosts: managers
