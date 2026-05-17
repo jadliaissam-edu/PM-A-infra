@@ -1,2 +1,17 @@
 ---
-# Tasks for celery
+# ── Celery Worker Configuration (Docker-based) ──────────
+# Celery workers are managed via docker-compose.prod.yml as part of the stack.
+# This role handles any additional Celery-specific configuration.
+
+- name: Ensure Celery log directory exists
+  file:
+    path: /var/log/celery
+    state: directory
+    mode: '0755'
+    owner: deploy
+  tags: celery
+
+- name: Configure Celery worker concurrency
+  set_fact:
+    celery_concurrency: "{{ celery_worker_concurrency | default(2) }}"
+  tags: celery

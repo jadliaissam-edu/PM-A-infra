@@ -1,2 +1,77 @@
 ---
-# Tasks for postgresql
+# ── PostgreSQL Configuration (self-hosted) ──────────────
+# Note: For Docker-based deployment, PostgreSQL runs as a container
+# managed by docker-compose.prod.yml. This role handles the self-hosted case.
+
+- name: Install PostgreSQL
+  apt:
+    name:
+      - postgresql
+      - postgresql-contrib
+      - python3-psycopg2
+    state: present
+    update_cache: yes
+  tags: postgresql
+
+- name: Ensure PostgreSQL service is running
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
+  tags: postgresql
+
+- name: Create database user
+  become_user: postgres
+  postgresql_user:
+    name: "{{ db_user | default('agileflow') }}"
+    password: "{{ db_password }}"
+    encrypted: yes
+  no_log: true
+  tags: [postgresql, secrets]
+
+- name: Create database
+  become_user: postgres
+  postgresql_db:
+    name: "{{ db_name | default('agileflow') }}"
+    owner: "{{ db_user | default('agileflow') }}"
+    encoding: UTF-8
+    lc_collate: en_US.UTF-8
+    lc_ctype: en_US.UTF-8
+  tags: postgresql
+
+- name: Enable pgvector extension
+  become_user: postgres
+  postgresql_ext:
+    name: vector
+    db: "{{ db_name | default('agileflow') }}"
+  ignore_errors: yes
+  tags: postgresql
+
+- name: Configure PostgreSQL for performance
+  lineinfile:
+    path: /etc/postgresql/{{ postgresql_version | default('16') }}/main/postgresql.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^#?listen_addresses', line: "listen_addresses = '*'" }
+    - { regexp: '^#?max_connections', line: 'max_connections = 100' }
+    - { regexp: '^#?shared_buffers', line: 'shared_buffers = 256MB' }
+    - { regexp: '^#?effective_cache_size', line: 'effective_cache_size = 768MB' }
+    - { regexp: '^#?work_mem', line: 'work_mem = 4MB' }
+    - { regexp: '^#?log_min_duration_statement', line: 'log_min_duration_statement = 200' }
+  notify: Restart PostgreSQL
+  tags: [postgresql, config]
+
+- name: Configure PostgreSQL access (pg_hba.conf)
+  copy:
+    dest: /etc/postgresql/{{ postgresql_version | default('16') }}/main/pg_hba.conf
+    content: |
+      # TYPE  DATABASE        USER            ADDRESS                 METHOD
+      local   all             postgres                                peer
+      local   all             all                                     md5
+      host    all             all             10.0.0.0/16             md5
+      host    all             all             127.0.0.1/32            md5
+      host    all             all             ::1/128                 md5
+  notify: Restart PostgreSQL
+  tags: [postgresql, security]

@@ -1,320 +1,631 @@
 networks:
+
   public_net:
+
     driver: overlay
+
     attachable: true
+
   backend_net:
+
     driver: overlay
+
     attachable: true
+
     internal: true
 
+
+
 volumes:
+
   postgres_data:
+
   redis_data:
+
   prometheus_data:
+
   grafana_data:
+
   certbot_webroot:
 
+
+
 secrets:
+
   db_password:
+
     external: true
+
   django_secret_key:
+
     external: true
+
   celery_broker_url:
+
     external: true
+
+
 
 services:
+
   nginx:
+
     image: nginx:alpine
+
     volumes:
+
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
       - certbot_webroot:/var/www/certbot:ro
+
       - ./certs:/etc/nginx/certs:ro
+
     ports:
+
       - "80:80"
+
       - "443:443"
+
     networks:
+
       - public_net
+
     deploy:
+
       mode: replicated
+
       replicas: 1
+
       placement:
+
         constraints:
+
           - node.role == manager
+
       resources:
+
         limits:
+
           cpus: "0.50"
+
           memory: 128M
+
         reservations:
+
           cpus: "0.10"
+
           memory: 64M
+
       restart_policy:
+
         condition: on-failure
+
         delay: 5s
+
         max_attempts: 3
+
       update_config:
+
         parallelism: 1
+
         delay: 10s
+
         failure_action: rollback
+
     healthcheck:
+
       test: ["CMD", "wget", "-q", "--spider", "http://localhost/healthz"]
+
       interval: 30s
+
       timeout: 10s
+
       retries: 3
+
       start_period: 30s
 
+
+
   frontend:
-    build:
-      context: ../../PM-A-frontend
-      dockerfile: Dockerfile
+
+    image: agileflow-frontend:latest
+
     networks:
+
       - public_net
+
     environment:
+
       - HOSTNAME=0.0.0.0
+
     deploy:
+
       mode: replicated
+
       replicas: 2
+
       placement:
+
         constraints:
+
           - node.labels.tier == app
+
       resources:
+
         limits:
+
           cpus: "0.50"
+
           memory: 256M
+
         reservations:
+
           cpus: "0.10"
+
           memory: 128M
+
       restart_policy:
+
         condition: on-failure
+
         delay: 5s
+
         max_attempts: 3
+
       update_config:
+
         parallelism: 1
+
         delay: 30s
+
         failure_action: rollback
+
     healthcheck:
+
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+
       interval: 30s
+
       timeout: 10s
+
       retries: 3
+
       start_period: 20s
+
+
 
   django_api:
-    build:
-      context: ../../PM-A-backend
-      dockerfile: Dockerfile
+
+    image: agileflow-backend:latest
+
     networks:
+
       - public_net
+
       - backend_net
+
     environment:
+
       DB_PASSWORD_FILE: /run/secrets/db_password
+
       SECRET_KEY_FILE: /run/secrets/django_secret_key
+
       DB_HOST: postgres
+
+      DB_NAME: agileflow
+
+      DB_USER: agileflow
+
       ALLOWED_HOSTS: "*"
+
       CELERY_BROKER_URL_FILE: /run/secrets/celery_broker_url
+
     secrets:
+
       - db_password
+
       - django_secret_key
+
       - celery_broker_url
+
     deploy:
+
       mode: replicated
+
       replicas: 2
+
       placement:
+
         constraints:
+
           - node.labels.tier == app
+
       resources:
+
         limits:
+
           cpus: "1.00"
+
           memory: 512M
+
         reservations:
+
           cpus: "0.25"
+
           memory: 256M
+
       restart_policy:
+
         condition: on-failure
+
         delay: 5s
+
         max_attempts: 3
+
       update_config:
+
         parallelism: 1
+
         delay: 30s
+
         failure_action: rollback
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
+
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/')"]
+
       interval: 30s
+
       timeout: 10s
+
       retries: 3
+
       start_period: 40s
 
+
+
   fastapi_ai:
-    build:
-      context: ../../PM-A-ia
-      dockerfile: Dockerfile
+
+    image: agileflow-ai:latest
+
     networks:
+
       - public_net
+
       - backend_net
+
     deploy:
+
       mode: replicated
+
       replicas: 1
+
       placement:
+
         constraints:
+
           - node.labels.tier == app
+
       resources:
+
         limits:
+
           cpus: "1.00"
+
           memory: 1024M
+
         reservations:
+
           cpus: "0.25"
+
           memory: 512M
+
       restart_policy:
+
         condition: on-failure
+
         delay: 5s
+
         max_attempts: 3
+
       update_config:
+
         parallelism: 1
+
         delay: 30s
+
         failure_action: rollback
+
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/docs')"]
+
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+
       interval: 30s
+
       timeout: 10s
+
       retries: 3
+
       start_period: 20s
 
+
+
   celery_worker:
-    build:
-      context: ../../PM-A-backend
-      dockerfile: Dockerfile
+
+    image: agileflow-backend:latest
+
     command: celery -A core worker -l info
+
     networks:
+
       - backend_net
+
     environment:
+
       DB_PASSWORD_FILE: /run/secrets/db_password
+
       DB_HOST: postgres
+
+      DB_NAME: agileflow
+
+      DB_USER: agileflow
+
       ALLOWED_HOSTS: "*"
+
       CELERY_BROKER_URL_FILE: /run/secrets/celery_broker_url
+
     secrets:
+
       - db_password
+
       - celery_broker_url
+
     deploy:
+
       mode: replicated
+
       replicas: 1
+
       placement:
+
         constraints:
+
           - node.labels.tier == app
+
       resources:
+
         limits:
+
           cpus: "1.00"
+
           memory: 512M
+
         reservations:
+
           cpus: "0.25"
+
           memory: 256M
+
       restart_policy:
+
         condition: on-failure
+
         delay: 5s
+
         max_attempts: 3
+
+
 
   postgres:
+
     image: pgvector/pgvector:pg16
+
     networks:
+
       - backend_net
+
     volumes:
+
       - postgres_data:/var/lib/postgresql/data
+
     environment:
+
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+
     secrets:
+
       - db_password
+
     deploy:
+
       mode: replicated
+
       replicas: 1
+
       placement:
+
         constraints:
+
           - node.labels.tier == data
+
       resources:
+
         limits:
+
           cpus: "1.00"
+
           memory: 1024M
+
         reservations:
+
           cpus: "0.50"
+
           memory: 512M
+
       restart_policy:
+
         condition: on-failure
+
         delay: 10s
+
         max_attempts: 5
+
     healthcheck:
+
       test: ["CMD-SHELL", "pg_isready -U postgres"]
+
       interval: 30s
+
       timeout: 10s
+
       retries: 3
+
+
 
   redis:
+
     image: redis:alpine
+
     networks:
+
       - backend_net
+
     volumes:
+
       - redis_data:/data
+
     command: redis-server --appendonly yes
+
     deploy:
+
       mode: replicated
+
       replicas: 1
+
       placement:
+
         constraints:
+
           - node.labels.tier == data
+
       resources:
+
         limits:
+
           cpus: "0.50"
+
           memory: 256M
+
         reservations:
+
           cpus: "0.10"
+
           memory: 128M
+
       restart_policy:
+
         condition: on-failure
+
         delay: 5s
+
         max_attempts: 3
+
     healthcheck:
+
       test: ["CMD", "redis-cli", "ping"]
+
       interval: 30s
+
       timeout: 10s
+
       retries: 3
 
+
+
   prometheus:
+
     image: prom/prometheus:latest
+
     networks:
+
       - backend_net
+
     volumes:
+
       - prometheus_data:/prometheus
+
     deploy:
+
       mode: replicated
+
       replicas: 1
+
       placement:
+
         constraints:
+
           - node.labels.tier == data
+
       resources:
+
         limits:
+
           cpus: "0.50"
+
           memory: 512M
+
         reservations:
+
           cpus: "0.10"
+
           memory: 256M
+
       restart_policy:
+
         condition: on-failure
 
+
+
   grafana:
+
     image: grafana/grafana:latest
+
     networks:
+
       - public_net
+
       - backend_net
+
     volumes:
+
       - grafana_data:/var/lib/grafana
+
     deploy:
+
       mode: replicated
+
       replicas: 1
+
       placement:
+
         constraints:
+
           - node.labels.tier == data
+
       resources:
+
         limits:
+
           cpus: "0.50"
+
           memory: 256M
+
         reservations:
+
           cpus: "0.10"
+
           memory: 128M
+
       restart_policy:
+
         condition: on-failure

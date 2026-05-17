@@ -4,6 +4,10 @@ terraform {
       source  = "hetznercloud/hcloud"
       version = ">= 1.45.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = ">= 4.0.0"
+    }
   }
   backend "local" {
     path = "terraform.tfstate"
@@ -11,11 +15,15 @@ terraform {
 }
 
 provider "hcloud" {
-  token = var.hcloud_token
+  # Token read from HCLOUD_TOKEN env var
 }
 
 locals {
   ssh_public_key = trimspace(file(var.ssh_public_key_path))
+}
+
+data "hcloud_ssh_key" "deploy" {
+  name = var.ssh_key_name
 }
 
 module "network" {
@@ -24,29 +32,35 @@ module "network" {
 }
 
 module "compute" {
-  source       = "../../modules/compute"
-  environment  = var.environment
-  server_count = var.server_count
-  network_id   = module.network.network_id
-  location     = var.location
-  ssh_public_key = local.ssh_public_key
+  source          = "../../modules/compute"
+  environment     = var.environment
+  server_count    = var.server_count
+  network_id      = module.network.network_id
+  location        = var.location
+  ssh_public_key  = local.ssh_public_key
+  ssh_key_id      = data.hcloud_ssh_key.deploy.id
+  firewall_ids    = [module.network.firewall_id]
 }
 
 module "database" {
-  source      = "../../modules/database"
-  environment = var.environment
-  network_id  = module.network.network_id
-  location    = var.location
-  db_password = var.db_password
+  source         = "../../modules/database"
+  environment    = var.environment
+  network_id     = module.network.network_id
+  location       = var.location
+  db_password    = var.db_password
   ssh_public_key = local.ssh_public_key
+  ssh_key_id     = data.hcloud_ssh_key.deploy.id
+  firewall_ids   = [module.network.firewall_id]
 }
 
 module "cache" {
-  source      = "../../modules/cache"
-  environment = var.environment
-  network_id  = module.network.network_id
-  location    = var.location
+  source         = "../../modules/cache"
+  environment    = var.environment
+  network_id     = module.network.network_id
+  location       = var.location
   ssh_public_key = local.ssh_public_key
+  ssh_key_id     = data.hcloud_ssh_key.deploy.id
+  firewall_ids   = [module.network.firewall_id]
 }
 
 module "storage" {
@@ -55,6 +69,34 @@ module "storage" {
   location    = var.location
 }
 
+# TODO: Enable when Hetzner DNS API token is available
+# module "dns" {
+#   source      = "../../modules/dns"
+#   environment = var.environment
+#   domain      = var.domain
+#   app_ip      = module.compute.instance_ips[0]
+# }
+#
+# module "ssl" {
+#   source                = "../../modules/ssl"
+#   environment           = var.environment
+#   domain                = var.domain
+#   san_domains           = []
+#   hetzner_dns_api_token = var.hetzner_dns_api_token
+# }
+
 output "server_ips" {
   value = module.compute.instance_ips
+}
+
+output "database_ip" {
+  value = module.database.db_private_ip
+}
+
+output "cache_ip" {
+  value = module.cache.cache_private_ip
+}
+
+output "firewall_id" {
+  value = module.network.firewall_id
 }
