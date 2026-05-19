@@ -1,6 +1,6 @@
 # PM-A Infrastructure as Code
 
-A comprehensive Infrastructure as Code (IaC) project for deploying the PM-A platform (AgileFlow) on Hetzner Cloud using Terraform and Ansible. This repository contains all necessary configurations for production-grade infrastructure deployment with Docker Swarm, including database, caching, and monitoring solutions.
+A comprehensive Infrastructure as Code (IaC) project for deploying AgileFlow on Hetzner Cloud using Terraform and Ansible. This repository contains all necessary configurations for production-grade infrastructure deployment with Docker Swarm, including database, caching, and monitoring solutions.
 
 ## 📋 Project Overview
 
@@ -402,18 +402,7 @@ When contributing to this infrastructure code:
 4. Never commit sensitive credentials
 5. Follow existing code structure and naming conventions
 
-## ⚖️ License
-
-This project is part of the PM-A platform infrastructure.
-
 ## 📧 Support
 
 For infrastructure-related issues or questions, refer to the project documentation or contact the infrastructure team.
 
----
-
-**Last Updated**: 2026-05-19
-
-**Version**: 1.0
-
-**Status**: Production Ready
