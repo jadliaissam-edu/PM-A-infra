@@ -1,4 +1,4 @@
-# PM-A Infrastructure as Code
+# AgileFlow Infrastructure as Code
 
 A comprehensive Infrastructure as Code (IaC) project for deploying AgileFlow on Hetzner Cloud using Terraform and Ansible. This repository contains all necessary configurations for production-grade infrastructure deployment with Docker Swarm, including database, caching, and monitoring solutions.
 
